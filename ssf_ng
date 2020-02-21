@@ -1,0 +1,280 @@
+#!/usr/bin/python3
+
+import configparser
+import fcntl
+import os
+import signal
+import struct
+import sys
+import termios
+import webbrowser
+import time as ttime
+
+import pexpect
+import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class Connection:
+    '''Creates connection to foreman'''
+
+    foreman_url = "https://10.10.30.201/api/"
+    call_type, rest_type = "GET", "hosts"
+    headers = {"Content-type": "application/json"}
+
+    def __init__(self, user, passd):
+        self.user = user
+        self.passd = passd
+
+    def get_json_from_foreman(self):
+        """Talking to remote foreman machine."""
+
+        try:
+            data = requests.get(self.foreman_url + self.rest_type,
+                                auth=(self.user, self.passd),
+                                headers=self.headers,
+                                verify=False,
+                                )
+        except OSError:
+            print("Get method cannot be performed, is Foreman reachable? \
+            Check your connection, quitting.")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("Interrupted by user, quitting")
+            sys.exit(2)
+
+        json_data = data.json()
+        try:
+            error = json_data['error']
+            print('\tAn error occured: ', error, '\n')
+        except KeyError:
+            total, body = json_data['total'], json_data['results']
+            print('\tTotal devices found: ', total, '\n')
+        return body
+
+
+class Table:
+    '''Table operations'''
+
+    fmt = '{:2} | {:19} | {:20} | {:15} | {:15} | {:20} | {:40}'
+
+    def __init__(self, devices):
+        self.devices = devices
+
+    def indexed_devices_generator(self):
+        '''Adding index to the each device and yields each device.'''
+        for index, device in enumerate(self.devices, 1):
+            device['index'] = index
+        yield from self.devices
+
+    def list_devices(self):
+        '''Listing device details row per device.'''
+        header_row = self.fmt.format(' #', 'DEVICE NAME', 'IP/ILO IP', 'OS/MODEL',
+                                     'STATUS', 'OWNER/GROUP', 'COMMENT')
+        row_length = len(header_row)
+        print('-' * row_length)
+        print(header_row)
+        print('-' * row_length)
+        for item in self.indexed_devices_generator():
+            self._table_format(item)
+            print('-' * row_length)
+
+    def _table_format(self, *args):
+        '''Table format.'''
+        for arg in args:
+            name_mod = arg["name"][18:] or 'n/a'
+            name_mod = str(name_mod.strip('bic.local'))
+
+            comment1 = arg['comment'][:20]
+            comment2 = arg['comment'][20:]
+
+            row = self.fmt.format(arg['index'] or 'n/a',
+                                  name_mod,
+                                  'IP:     ' + arg['ip'] or 'n/a',
+                                  arg['operatingsystem_name'] or 'n/a',
+                                  arg['global_status_label'][:13] or 'n/a',
+                                  arg['owner_name'][:18] or 'n/a',
+                                  comment1)
+            row2 = self.fmt.format(' ',
+                                   ' ',
+                                   'ILO-IP: ' + arg['sp_ip'],
+                                   arg['model_name'] or 'n/a',
+                                   arg['build_status_label'][:13] or 'n/a',
+                                   arg['hostgroup_title'][:18] or 'n/a',
+                                   comment2
+                                   )
+            print(row)
+            print(row2)
+
+
+class Actions:
+    """Provides service operations."""
+
+    varbash1 = "export hostv=$(cat /etc/konicaminolta/global/wph-version)"
+    varbash2 = "export hostm=$(cat /etc/konicaminolta/global/wph-model)"
+    varbash3 = 'export hostn=$(hostname | sed "s/.*ffff-/$hostm-/g")'
+    varbash4 = 'export hostr=$(cat /etc/apt/sources.list.d/konicaminolta.list | grep debian | cut -d" " -f4)'
+    wph_intro = "export PS1='[$hostv-$hostr]\\[\\e]0;\\u@\\h: \\w\\a\\]${debian_chroot:+($debian_chroot)}\\u@$hostn:\\w\\$'"
+
+    answ = ["password: ", "# ", "iLO-> ", "login: ", "Password: "]
+    answer = ""
+
+    def __init__(self, indexed_devices):
+        self.indexed_devices = indexed_devices
+
+    def _ask_input(self):
+        """asking user for input"""
+
+        print(
+            """\nFor specifying a host that you want to access using ssh, type number as per index.
+        For accessing ILO using webbrowser prepend number with letter [i]
+        For accessing ILO console prepend number with letter          [c]"""
+        )
+        try:
+            self.answer = str(input("Host ID: "))
+        except KeyboardInterrupt:
+            print("Program interrupted by user, quitting.")
+            sys.exit(1)
+
+        return self.answer
+
+    def answering(self):
+        """Performs operation based on the input"""
+        is_answer = self._ask_input()
+
+        if is_answer == "":
+            print("Couldn't parse your answer, exiting")
+            sys.exit(1)
+        else:
+            for item in self.indexed_devices:
+                if self.answer == str(item["index"]):
+                    try:
+                        self.connect_ssh(item)
+                    except OSError as error:
+                        print("Execution failed:", error)
+
+                elif self.answer == "i" + str(item["index"]):
+                    try:
+                        self.connect_ilo_web(item)
+                    except OSError as error:
+                        print(
+                            "Unable to connect to the ILO remote machine via https", error
+                        )
+
+                elif self.answer == "c" + str(item["index"]):
+                    try:
+                        self.connect_ilo_cons(item)
+                    except OSError as error:
+                        print("Unable to connect to the ILO's console", error)
+
+    def connect_ssh(self, item):
+        """connect to the host via ssh """
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no root@" + str(item["ip"]))
+
+        def sigwinch_passthrough(sig, data):
+            """configure a proper term size"""
+            s = struct.pack("HHHH", 0, 0, 0, 0)
+            a = struct.unpack(
+                "hhhh", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, s)
+            )
+            if not child.closed:
+                child.setwinsize(a[0], a[1])
+
+        signal.signal(signal.SIGWINCH, sigwinch_passthrough)
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.expect(Actions.answ)
+        child.sendline(Actions.varbash1)
+        child.sendline(Actions.varbash2)
+        child.sendline(Actions.varbash3)
+        child.sendline(Actions.varbash4)
+        child.sendline(Actions.wph_intro)
+        child.sendline("clear")
+        child.interact()
+
+    def connect_ilo_web(self, item):
+        """connect to WEB ILO"""
+        webbrowser.open("https://{}".format(item["sp_ip"]), new=2, autoraise=True)
+
+    def connect_ilo_cons(self, item):
+        """connect to ILO console"""
+        print("Connecting to ILO console")
+        print("For leaving the console press ESC-( and once you're in back in HPIlo type \'exit\'")
+        ttime.sleep(4)
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no Administrator@" + str(item["sp_ip"]))
+        child.expect(Actions.answ)
+        child.sendline("Administrator")
+        child.expect(Actions.answ)
+        child.sendline("vsp")
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.sendline("clear")
+        child.interact()
+
+
+def main():
+    """main"""
+
+    os.system("clear")
+    # Header
+    print(
+        """
+   ---------------------------------------------------------------------------------------------
+   +++ Foreman API terminal tool for getting a list of objects and accessing them on request +++
+   ---------------------------------------------------------------------------------------------
+    """
+    )
+
+    user_config = os.path.expanduser("~") + "/.foreman-api_creds"
+    config = configparser.ConfigParser()
+    config.read(user_config)
+
+    try:
+        user = config["credentials"]["user"]
+        passd = config["credentials"]["password"]
+        filter_group = config["filter"]["group"]
+
+    except KeyError:
+        print(
+            """
+        Looks like your credentials to Foreman are not set.
+        You need to specify user and password for accessing Foreman API remotely.
+        In order to achieve that create a file called \'.foreman-api_creds\' with following contents:
+        ....
+        [credentials]
+        user = youremail@domain.com
+        password = yourpasswordtoaccessforeman
+        [filter]
+        group = all
+        ....
+
+        ## Please note that filter section is for filtering of hosts for a specific team e.g. System Engineering
+        EOF
+
+        """
+        )
+        sys.exit(2)
+
+    # W/A for skipping host filtering
+        if not sys.argv[1] == "all":
+            filter_group = "all"
+        else:
+            print('Host skipping filter set, continue with a filtered set of devices. ')
+
+    # getting data
+    login = Connection(user, passd)
+
+    devices = login.get_json_from_foreman()
+    table = Table(devices)
+    table.list_devices()
+    indexed_devices = table.indexed_devices_generator()
+    run_action = Actions(indexed_devices)
+    run_action.answering()
+
+
+if __name__ == "__main__":
+    main()

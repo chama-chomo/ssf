@@ -1,0 +1,325 @@
+#!/usr/bin/python3
+
+import configparser
+import fcntl
+import json
+import os
+import signal
+import struct
+import sys
+import termios
+import webbrowser
+
+import pexpect
+import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class Connection:
+
+
+    def __init__(self, user, passd,
+                 foreman_url="https://10.10.30.201/api/",
+                 call_type="GET", rest_type="hosts"):
+        self.user = user
+        self.passd = passd
+        self.foreman_url = foreman_url
+        self.call_type = call_type
+        self.rest_type = rest_type
+
+    def initiate(self):
+        """talking to remote foreman machine"""
+        try:
+            headers = {"Content-type": "application/json"}
+            b_data = requests.get(
+                self.foreman_url + self.rest_type,
+                auth=(self.user, self.passd),
+                headers=headers,
+                verify=False,
+            )
+        except OSError:
+            print(
+                "Get method cannot be performed, is Foreman reachable? Check your connection, quitting."
+            )
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("Interrupted by user")
+            sys.exit(2)
+
+        j_data = b_data.json()
+
+        return json.dumps(j_data)
+
+
+class Operations:
+    """Process data"""
+
+    def __init__(self, Data, filter_group=None):
+        self.data = Data
+        self.filter_group = filter_group
+
+    def filter_data(self):
+        """filters data"""
+
+        response = json.loads(self.data, )
+
+        foreman_allhost_ = []
+        foreman_filteredhost_ = []
+        idx = 0
+
+        for doc in response["results"]:
+            name_mod = doc["name"][22:]
+            name_mod = str(name_mod.strip('bic.local'))
+            dicty = {
+                "name": name_mod,
+                "ip": doc["ip"][:13] if doc["ip"] else "n/a",
+                "ilo_ip": doc["sp_ip"][:13] if doc["sp_ip"] else "n/a",
+                "os_name": doc["operatingsystem_name"][:13],
+                "comment": doc["comment"][:32] if doc["comment"] else "n/a",
+                "global_status": doc["global_status_label"][:5],
+                "build_status": doc["build_status_label"][:13]
+                if "build_status_label" in doc
+                else "n/a",
+                "owner_name": doc["owner_name"][:14] if doc["owner_name"] else "n/a",
+                "model_name": doc["model_name"][:10] if doc["model_name"] else "n/a",
+                "hostgroup_title": doc["hostgroup_title"]
+                if doc["hostgroup_title"]
+                else "n/a",
+            }
+            if self.filter_group == 'all':
+                idx = idx + 1
+                dicty['index'] = idx
+                foreman_allhost_.append(dicty)
+            elif doc["hostgroup_title"] == self.filter_group or doc["hostgroup_title"] == self.filter_group + '/Sandbox':
+                idx = idx + 1
+                dicty['index'] = idx
+                foreman_filteredhost_.append(dicty)
+
+
+        if len(foreman_filteredhost_) == 0:
+            return foreman_allhost_
+
+        return foreman_filteredhost_
+
+
+    def pass_to_table(self):
+        """creating table"""
+        data = self.filter_data()
+        break_line = "-" * 166
+
+        print(break_line)
+
+        print(
+            "| {:3} | {:15} | {:12} | {:12} | {:14} | {:10} | {:21} | {:15} | {:36} |".format(
+                "ID",
+                "NAME (trunc)",
+                "IP",
+                "ILO IP",
+                "VERSION",
+                "MODEL",
+                "BUILD/GLOBAL STATUS",
+                "OWNER",
+                "COMMENT"
+            )
+        )
+
+        print(break_line)
+
+        for row in data:
+            p1 = row["index"]
+            p2 = row["name"]
+            p3 = row["ip"]
+            p4 = row["ilo_ip"]
+            p5 = row["os_name"]
+            p6 = row["model_name"]
+            p7 = row["build_status"]
+            p8 = row["global_status"]
+            p9 = row["owner_name"]
+            p10 = row["comment"]
+            p10 = ''.join(p10.splitlines())
+
+            _row = "| {:3} | {:15} | {:12} | {:12} | {:14} | {:10} | {:15}@{:5} | {:15} | {:36} |".format(
+                p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
+            )
+
+            # printni filtered alebo all dict
+            print(_row)
+
+        print(break_line)
+
+
+class Actions:
+    """defines connect operation"""
+
+    varbash1 = "export hostv=$(cat /etc/konicaminolta/global/wph-version)"
+    varbash2 = "export hostm=$(cat /etc/konicaminolta/global/wph-model)"
+    varbash3 = 'export hostn=$(hostname | sed "s/.*ffff-/$hostm-/g")'
+    varbash4 = 'export hostr=$(cat /etc/apt/sources.list.d/konicaminolta.list | grep debian | cut -d" " -f4)'
+    wph_intro = "export PS1='[$hostv-$hostr]\\[\\e]0;\\u@\\h: \\w\\a\\]${debian_chroot:+($debian_chroot)}\\u@$hostn:\\w\\$'"
+
+    answ = ["password: ", "# ", "iLO-> ", "login: ", "Password: "]
+
+    def __init__(self, dictx):
+        self.answer = ""
+        self.foreman_dict = dictx
+
+    def ask_input(self):
+        """asking user for input"""
+
+        print(
+            """\nFor specifying a host that you want to access using ssh, type number as per index.
+        For accessing ILO using webbrowser prepend number with letter [i]
+        For accessing ILO console prepend number with letter          [c]"""
+        )
+        try:
+            self.answer = str(input("Host ID: "))
+        except KeyboardInterrupt:
+            print("Program interrupted by user, quitting.")
+            sys.exit(1)
+
+        return self.answer
+
+    def answering(self):
+        """perform operation based on answer"""
+        is_answer = self.ask_input()
+
+        if is_answer == "":
+            print("Couldn't parse your answer, exiting")
+            sys.exit(0)
+        else:
+            for item in self.foreman_dict:
+                if self.answer == str(item["index"]):
+                    try:
+                        self.connect_ssh(item)
+                    except OSError as e:
+                        print("Execution failed:", e)
+
+                elif self.answer == "i" + str(item["index"]):
+                    try:
+                        self.connect_ilo_web(item)
+                    except OSError as e:
+                        print(
+                            "Unable to connect to the ILO remote machine via https", e
+                        )
+
+                elif self.answer == "c" + str(item["index"]):
+                    try:
+                        self.connect_ilo_cons(item)
+                    except OSError as e:
+                        print("Unable to connect to the ILO's console", e)
+
+    def connect_ssh(self, item):
+        """connect to the host via ssh """
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no root@" + str(item["ip"]))
+
+        def sigwinch_passthrough(sig, data):
+            """configure a proper term size"""
+            s = struct.pack("HHHH", 0, 0, 0, 0)
+            a = struct.unpack(
+                "hhhh", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, s)
+            )
+            if not child.closed:
+                child.setwinsize(a[0], a[1])
+
+        signal.signal(signal.SIGWINCH, sigwinch_passthrough)
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.expect(Actions.answ)
+        child.sendline(Actions.varbash1)
+        child.sendline(Actions.varbash2)
+        child.sendline(Actions.varbash3)
+        child.sendline(Actions.varbash4)
+        child.sendline(Actions.wph_intro)
+        child.sendline("clear")
+        child.interact()
+
+    def connect_ilo_web(self, item):
+        """connect to WEB ILO"""
+        webbrowser.open("https://{}".format(item["ilo_ip"]), new=2, autoraise=True)
+
+    def connect_ilo_cons(self, item):
+        """connect to ILO console"""
+        print("Connecting to ILO console")
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no Administrator@" + str(item["ilo_ip"]))
+        child.expect(Actions.answ)
+        child.sendline("Administrator")
+        child.expect(Actions.answ)
+        child.sendline("vsp")
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.expect(Actions.answ)
+        child.sendline("root")
+        child.sendline("clear")
+        child.interact()
+
+
+def main():
+    """main"""
+
+    os.system("clear")
+
+    # Header
+    print(
+        """
+
+   Foreman API terminal tool for getting a list of objects and accessing them on request
+
+    """
+    )
+
+    user_config = os.path.expanduser("~") + "/.foreman-api_creds"
+    config = configparser.ConfigParser()
+    config.read(user_config)
+
+    try:
+        user = config["credentials"]["user"]
+        passd = config["credentials"]["password"]
+        filter_group = config["filter"]["group"]
+
+    except KeyError:
+        print(
+            """
+        Looks like your credentials to Foreman are not set.
+        You need to specify user and password for accessing Foreman API remotely.
+        In order to achieve that create a file called \'.foreman-api_creds\' with following contents:
+        ....
+        [credentials]
+        user = youremail@domain.com
+        password = yourpasswordtoaccessforeman
+        [filter]
+        group = all
+        ....
+
+        ## Please note that filter section is for filtering of hosts for a specific team e.g. System Engineering
+        EOF
+
+        """
+        )
+        sys.exit(2)
+
+    # W/A for skipping host filtering
+    try:
+        if sys.argv[1] == "all":
+            filter_group = "all"
+    except Exception:
+        pass
+
+    # getting data
+    login = Connection(user, passd)
+    foreman_result = login.initiate()
+    data_for_table = Operations(foreman_result, filter_group)
+
+    # formatting a table with obtained data
+    Operations.pass_to_table(data_for_table)
+
+    # processing answer
+    # performing action based on answer
+    get_dict = Operations.filter_data(data_for_table)
+    conn = Actions(get_dict)
+    conn.answering()
+
+
+if __name__ == "__main__":
+    main()
