@@ -41,4 +41,9 @@ Host ID:
 
 ```
 
+# Outstanding issues / bugs
+
+* since this tool gives a reasonable output usually on maximized windows only, sometimes it is needed to re-maximize your terminal window in order to use the
+  full capcaity of the window's width limit after you get the prompt
+
 
