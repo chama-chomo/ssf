@@ -7,6 +7,7 @@
 * It can serve you ILO web link of the particular machine ('i' option) directly
   in your web browser
 
+
 ```
    ---------------------------------------------------------------------------------------------
    +++ Foreman API terminal tool for getting a list of objects and accessing them on request +++
