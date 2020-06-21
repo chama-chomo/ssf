@@ -3,47 +3,29 @@
 * It can list only devices belonging to your team
 * It can connect you to a device using SSH and default root password (DEV env)
 * It can connect you to a base os of the device using serial console managed by
-  HP ILO ('c' option)
-* It can serve you ILO web link of the particular machine ('i' option) directly
-  in your web browser
+  HP ILO 
+* It can serve you ILO web link of the particular machine directly
+  in your default web browser
 
 
 ```
-   ---------------------------------------------------------------------------------------------
-   +++ Foreman API terminal tool for getting a list of objects and accessing them on request +++
-   ---------------------------------------------------------------------------------------------
-    
-        Total devices found:  5 
+ ---------------------------------------------------------------------------
+ +++ [ SSF ] This tool lets you access a system being managed by Foreman +++
+ ---------------------------------------------------------------------------
 
------------------------------------------------------------------------------------------------------------------------------------------------------
- # | DEVICE NAME         | IP/ILO IP            | OS/MODEL        | STATUS          | OWNER/GROUP          | COMMENT                                 
------------------------------------------------------------------------------------------------------------------------------------------------------
- 1 | -ffff-000000029042  | IP:     10.10.29.42  | WPH_main 2.0.0  | OK              | Matej Soroka         | WPHT-42446 Install V                    
-   |                     | ILO-IP: 10.10.29.43  | SKU1 Edge       | Installed       | Scarabs              | elero and MinIO                         
------------------------------------------------------------------------------------------------------------------------------------------------------
- 2 | -ffff-000000029046  | IP:     10.10.29.46  | WPH_main 2.0.0  | OK              | Marek Vaculovic      | RAM of SKU3                             
-   |                     | ILO-IP: 10.10.29.47  | SKU2 Edge       | Installed       | Scarabs              |                                         
------------------------------------------------------------------------------------------------------------------------------------------------------
- 3 | -ffff-000000029054  | IP:     10.10.29.54  | WPH_main 1.9    | Error           | Martin Ciganik       | mci                                     
-   |                     | ILO-IP: 10.10.29.55  | SKU3 Edge       | Token expired   | Scarabs              |                                         
------------------------------------------------------------------------------------------------------------------------------------------------------
- 4 | -ffff-000000029094  | IP:     10.10.29.94  | WPH_main 2.0.0  | OK              | Marek Vaculovic      | Machine in Server ro                    
-   |                     | ILO-IP: 10.10.29.95  | SKU1            | Installed       | Scarabs              | om                                      
------------------------------------------------------------------------------------------------------------------------------------------------------
- 5 | -ffff-010010029066  | IP:     10.10.29.222 | WPH_main 1.9    | OK              | Martin Ciganik       | [WPHT-42599] Full Ba                    
-   |                     | ILO-IP: 10.10.29.208 | SKU2            | Installed       | Scarabs              | ckup Data Size Analysis                 
------------------------------------------------------------------------------------------------------------------------------------------------------
+ 5 devices found, please choose WPH system you want to connect to:
 
-For specifying a host that you want to access using ssh, type number as per index.
-        For accessing ILO using webbrowser prepend number with letter [i]
-        For accessing ILO console prepend number with letter          [c]
-Host ID: 
+     IP.............  HOSTNAME................................  OS..................  TEAM...........  COMMENT.....................................................
 
+ ==> 10.10.30.15      00000000-0000-0000-ffff-000000000015      WPH_main 1.9          Scarabs          shared with Shelby Cobra, in use
+     10.10.29.42      00000000-0000-0000-ffff-000000029042      WPH_main 2.0.0        Scarabs          Investigation of WPHT-48833
+     10.10.29.46      00000000-0000-0000-ffff-000000029046      WPH_main 1.9          Scarabs          Charlie - development/testing in use
+     10.10.29.54      00000000-0000-0000-ffff-000000029054      WPH_staging 1.9       Scarabs          Charlie - Full Recovery with 1.9.1 WPHT - 48877
+     10.10.29.222     00000000-0000-0000-ffff-010010029066      WPH_main 1.9          Scarabs          development
 ```
 
 # Outstanding issues / bugs
 
-* since this tool gives a reasonable output usually on maximized windows only, sometimes it is needed to re-maximize your terminal window in order to use the
-  full capcaity of the window's width limit after you get the prompt
+n/a
 
 

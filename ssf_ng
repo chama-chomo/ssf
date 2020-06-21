@@ -1,18 +1,15 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import configparser
-import fcntl
 import os
-import signal
-import struct
 import sys
-import termios
 import webbrowser
 import time as ttime
 
 import pexpect
 import requests
 import urllib3
+from pick import pick
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -51,62 +48,42 @@ class Connection:
             print('\tAn error occured: ', error, '\n')
         except KeyError:
             total, body = json_data['total'], json_data['results']
-            print('\tTotal devices found: ', total, '\n')
-        return body
+        return total, body
 
 
-class Table:
-    '''Table operations'''
-
-    fmt = '{:2} | {:19} | {:20} | {:15} | {:15} | {:20} | {:40}'
+class Menu:
+    """Create nice menu."""
 
     def __init__(self, devices):
-        self.devices = devices
+        self.count, self.devices = devices
 
-    def indexed_devices_generator(self):
-        '''Adding index to the each device and yields each device.'''
-        for index, device in enumerate(self.devices, 1):
-            device['index'] = index
-        yield from self.devices
+    def get_label(self, option):
 
-    def list_devices(self):
-        '''Listing device details row per device.'''
-        header_row = self.fmt.format(' #', 'DEVICE NAME', 'IP/ILO IP', 'OS/MODEL',
-                                     'STATUS', 'OWNER/GROUP', 'COMMENT')
-        row_length = len(header_row)
-        print('-' * row_length)
-        print(header_row)
-        print('-' * row_length)
-        for item in self.indexed_devices_generator():
-            self._table_format(item)
-            print('-' * row_length)
+        ip = option.get('ip')[:14]
+        name = option.get('name').replace('.bic.local', '')[:40]
+        os = option.get('operatingsystem_name')[:19]
+        group = option.get('hostgroup_name')[:14]
+        comment = option.get('comment').replace('\n',' ').replace('\r', '')[:59]
 
-    def _table_format(self, *args):
-        '''Table format.'''
-        for arg in args:
-            name_mod = arg["name"][18:] or 'n/a'
-            name_mod = str(name_mod.strip('bic.local'))
+        formatted_line = '{:<15}  {:<40}  {:<20}  {:<15}  {:<60} '.format(ip, name, os, group,
+                                                                          comment)
+        return formatted_line
 
-            comment1 = arg['comment'][:20]
-            comment2 = arg['comment'][20:]
+    @property
+    def title(self):
+        title = '''---------------------------------------------------------------------------
++++ [ SSF ] This tool lets you access a system being managed by Foreman +++
+---------------------------------------------------------------------------
 
-            row = self.fmt.format(arg['index'] or 'n/a',
-                                  name_mod,
-                                  'IP:     ' + arg['ip'] or 'n/a',
-                                  arg['operatingsystem_name'] or 'n/a',
-                                  arg['global_status_label'][:13] or 'n/a',
-                                  arg['owner_name'][:18] or 'n/a',
-                                  comment1)
-            row2 = self.fmt.format(' ',
-                                   ' ',
-                                   'ILO-IP: ' + arg['sp_ip'],
-                                   arg['model_name'] or 'n/a',
-                                   arg['build_status_label'][:13] or 'n/a',
-                                   arg['hostgroup_title'][:18] or 'n/a',
-                                   comment2
-                                   )
-            print(row)
-            print(row2)
+{} devices found, please choose WPH system you want to connect to:\n
+    {:.<15}  {:.<40}  {:.<20}  {:.<15}  {:.<60}'''.format(self.count, 'IP', 'HOSTNAME', 'OS',
+                                                          'TEAM', 'COMMENT')
+        return title
+
+    def hosts_table(self):
+        """Makes a table from input entries."""
+        selected = pick(self.devices, self.title, indicator='==>', options_map_func=self.get_label)
+        return selected[0]  # returns json of foreman entry
 
 
 class Actions:
@@ -121,68 +98,42 @@ class Actions:
     answ = ["password: ", "# ", "iLO-> ", "login: ", "Password: "]
     answer = ""
 
-    def __init__(self, indexed_devices):
-        self.indexed_devices = indexed_devices
+    def __init__(self, device):
+        self.device = device
 
-    def _ask_input(self):
-        """asking user for input"""
+    def device_actions(self):
+        title = """DEVICE:
+== IP / ILO IP: {} / {}
+== HOSTNAME / MODEL: {} / {} / {}
+== OS NAME: {}
+== OWNER / GROUP: {} / {}
+== STATUS: {}
+== BUILD STATUS: {}
+== COMMENT: {}
 
-        print(
-            """\nFor specifying a host that you want to access using ssh, type number as per index.
-        For accessing ILO using webbrowser prepend number with letter [i]
-        For accessing ILO console prepend number with letter          [c]"""
-        )
-        try:
-            self.answer = str(input("Host ID: "))
-        except KeyboardInterrupt:
-            print("Program interrupted by user, quitting.")
-            sys.exit(1)
+Please choose an action: """.format(self.device.get('ip'),
+                                    self.device.get('sp_ip'),
+                                    self.device.get('name'),
+                                    self.device.get('medium_name'),
+                                    self.device.get('model_name'),
+                                    self.device.get('operatingsystem_name'),
+                                    self.device.get('owner_name'),
+                                    self.device.get('hostgroup_name'),
+                                    self.device.get('global_status_label'),
+                                    self.device.get('build_status.label'),
+                                    self.device.get('comment'))
 
-        return self.answer
+        options = ['SSH               (establish SSH connection to a machine)',
+                   'ILO CONSOLE       (establish SSH connection to a machine via ILO console)',
+                   'ILO WEB           (open ILO web interface in the WEB browser)']
+        _, index = pick(options, title, indicator='==>')
 
-    def answering(self):
-        """Performs operation based on the input"""
-        is_answer = self._ask_input()
+        return index
 
-        if is_answer == "":
-            print("Couldn't parse your answer, exiting")
-            sys.exit(1)
-        else:
-            for item in self.indexed_devices:
-                if self.answer == str(item["index"]):
-                    try:
-                        self.connect_ssh(item)
-                    except OSError as error:
-                        print("Execution failed:", error)
-
-                elif self.answer == "i" + str(item["index"]):
-                    try:
-                        self.connect_ilo_web(item)
-                    except OSError as error:
-                        print(
-                            "Unable to connect to the ILO remote machine via https", error
-                        )
-
-                elif self.answer == "c" + str(item["index"]):
-                    try:
-                        self.connect_ilo_cons(item)
-                    except OSError as error:
-                        print("Unable to connect to the ILO's console", error)
-
-    def connect_ssh(self, item):
+    def connect_ssh(self):
         """connect to the host via ssh """
-        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no root@" + str(item["ip"]))
-
-        def sigwinch_passthrough(sig, data):
-            """configure a proper term size"""
-            s = struct.pack("HHHH", 0, 0, 0, 0)
-            a = struct.unpack(
-                "hhhh", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, s)
-            )
-            if not child.closed:
-                child.setwinsize(a[0], a[1])
-
-        signal.signal(signal.SIGWINCH, sigwinch_passthrough)
+        term_size = os.get_terminal_size()
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no root@" + str(self.device["ip"]))
         child.expect(Actions.answ)
         child.sendline("root")
         child.expect(Actions.answ)
@@ -192,18 +143,19 @@ class Actions:
         child.sendline(Actions.varbash4)
         child.sendline(Actions.wph_intro)
         child.sendline("clear")
+        child.setwinsize(term_size.lines, term_size.columns)
         child.interact()
 
-    def connect_ilo_web(self, item):
+    def connect_ilo_web(self):
         """connect to WEB ILO"""
-        webbrowser.open("https://{}".format(item["sp_ip"]), new=2, autoraise=True)
+        webbrowser.open("https://{}".format(self.device["sp_ip"]), new=2, autoraise=True)
 
-    def connect_ilo_cons(self, item):
+    def connect_ilo_cons(self):
         """connect to ILO console"""
         print("Connecting to ILO console")
         print("For leaving the console press ESC-( and once you're in back in HPIlo type \'exit\'")
         ttime.sleep(4)
-        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no Administrator@" + str(item["sp_ip"]))
+        child = pexpect.spawn("ssh -o StrictHostKeyChecking=no Administrator@" + str(self.device["sp_ip"]))
         child.expect(Actions.answ)
         child.sendline("Administrator")
         child.expect(Actions.answ)
@@ -212,6 +164,7 @@ class Actions:
         child.sendline("root")
         child.expect(Actions.answ)
         child.sendline("root")
+        child.sendline("setterm --resize")
         child.sendline("clear")
         child.interact()
 
@@ -221,13 +174,6 @@ def main():
 
     os.system("clear")
     # Header
-    print(
-        """
-   ---------------------------------------------------------------------------------------------
-   +++ Foreman API terminal tool for getting a list of objects and accessing them on request +++
-   ---------------------------------------------------------------------------------------------
-    """
-    )
 
     user_config = os.path.expanduser("~") + "/.foreman-api_creds"
     config = configparser.ConfigParser()
@@ -236,44 +182,46 @@ def main():
     try:
         user = config["credentials"]["user"]
         passd = config["credentials"]["password"]
-        filter_group = config["filter"]["group"]
 
     except KeyError:
         print(
             """
         Looks like your credentials to Foreman are not set.
         You need to specify user and password for accessing Foreman API remotely.
-        In order to achieve that create a file called \'.foreman-api_creds\' with following contents:
+        In order to achieve that create a file \'.foreman-api_creds\' in your $HOME
+        directory with following contents:
         ....
         [credentials]
         user = youremail@domain.com
         password = yourpasswordtoaccessforeman
-        [filter]
-        group = all
         ....
 
-        ## Please note that filter section is for filtering of hosts for a specific team e.g. System Engineering
-        EOF
+        Note, only devices that are assigned to your team will be listed for you, unless
+        you're Foreman admin.
 
         """
         )
         sys.exit(2)
 
-    # W/A for skipping host filtering
-        if not sys.argv[1] == "all":
-            filter_group = "all"
-        else:
-            print('Host skipping filter set, continue with a filtered set of devices. ')
-
     # getting data
     login = Connection(user, passd)
 
     devices = login.get_json_from_foreman()
-    table = Table(devices)
-    table.list_devices()
-    indexed_devices = table.indexed_devices_generator()
-    run_action = Actions(indexed_devices)
-    run_action.answering()
+    table = Menu(devices)
+    entry = table.hosts_table()
+    actions = Actions(entry)
+    action = actions.device_actions()
+    if action == 0:  # SSH option
+        actions.connect_ssh()
+
+    elif action == 1:  # ILO SSH option
+        actions.connect_ilo_cons()
+    elif action == 2:  # ILO WEB option
+        actions.connect_ilo_web()
+    else:
+        print('Invalid action')
+        sys.exit(1)
+
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ configparser = "*"
 pexpect = "*"
 requests = "*"
 urllib3 = "*"
+pick = "*"
 
 [requires]
 python_version = "3.7"
