@@ -7,7 +7,27 @@
 * It can serve you ILO web link of the particular machine directly
   in your default web browser
 
-![alt text](other/ssf.gif "How it works")
+# Installation
+
+SSF is written in Python3
+
+Python modules that need to be installed prior using the tool:
+- configparser
+- pexpect
+- requests
+- urllib3
+- pick
+
+Install using `pip` or you can let `pipenv` handle this. Pipfile is attached to the repository.
+
+# Usage
+
+You can make a soft link on your system in order to have the tool available from
+anywhere, type as 'root' :
+`ln -s /path/to/ssh_ng /usr/bin/ssf`
+
+or call it as below:
+`python3 /path/to/ssf_ng`
 
 # Outstanding issues / bugs
 
