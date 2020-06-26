@@ -9,27 +9,50 @@ import time as ttime
 import pexpect
 import requests
 import urllib3
-from pick import pick
+from pick import pick, Picker
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-class Connection:
+class Foreman:
     '''Creates connection to foreman'''
 
     foreman_url = "https://10.10.30.201/api/"
-    call_type, rest_type = "GET", "hosts"
     headers = {"Content-type": "application/json"}
 
     def __init__(self, user, passd):
         self.user = user
         self.passd = passd
 
-    def get_json_from_foreman(self):
-        """Talking to remote foreman machine."""
+    def is_admin(self):
+        """If user is admin provide list of groups to choose from."""
+        try:
+            data = requests.get(self.foreman_url + 'users/' + self.user,
+                                auth=(self.user, self.passd),
+                                headers=self.headers,
+                                verify=False,
+                                )
+        except OSError:
+            print("Get method cannot be performed, is Foreman reachable? \
+            Check your connection, quitting.")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("Interrupted by user, quitting")
+            sys.exit(2)
 
         try:
-            data = requests.get(self.foreman_url + self.rest_type,
+            result = data.json()
+            if result['admin'] is not True:
+                return False
+        except (ValueError, KeyError):
+            return False
+        else:
+            return True
+
+    def get_json_from_foreman(self):
+        """Talking to remote foreman machine."""
+        try:
+            data = requests.get(self.foreman_url + 'hosts',
                                 auth=(self.user, self.passd),
                                 headers=self.headers,
                                 verify=False,
@@ -52,13 +75,32 @@ class Connection:
 
 
 class Menu:
-    """Create nice menu."""
+    """Create a nice menu."""
 
-    def __init__(self, devices):
+    def __init__(self, devices, admin=False):
         self.count, self.devices = devices
+        self.header = '''---------------------------------------------------------------------------
++++ [ SSF ] This tool lets you access a system being managed by Foreman +++
+---------------------------------------------------------------------------
+                   [Press "q" to quit, "j/k" or arrows to move in the menu]\n'''
+        if admin:
+            self.mod_header = self.header + "\n !!! ADMIN MODE detected, use group filter to narrow selection: "
+            self.group  = self._choose_group()
+        else:
+            self.group = None
+
+    def _choose_group(self):
+        """Create menu for choosing a group."""
+        groups = {group['hostgroup_name'] for group in self.devices}
+        groups = list(groups)
+        groups.insert(0, 'SHOW ALL DEVICES')
+        selected, _ = pick(groups, self.mod_header, indicator='==>')
+        if selected == 'SHOW ALL DEVICES':
+            return None
+        return selected
 
     def get_label(self, option):
-
+        """Format text for the table."""
         ip = option.get('ip')[:14]
         name = option.get('name').replace('.bic.local', '')[:40]
         os = option.get('operatingsystem_name')[:19]
@@ -71,19 +113,26 @@ class Menu:
 
     @property
     def title(self):
-        title = '''---------------------------------------------------------------------------
-+++ [ SSF ] This tool lets you access a system being managed by Foreman +++
----------------------------------------------------------------------------
-
-{} devices found, please choose WPH system you want to connect to:\n
-    {:.<15}  {:.<40}  {:.<20}  {:.<15}  {:.<60}'''.format(self.count, 'IP', 'HOSTNAME', 'OS',
-                                                          'TEAM', 'COMMENT')
+        title = '''{}\n{} devices found.. Please select WPH system you want to access:\n
+    {:.<15}  {:.<40}  {:.<20}  {:.<15}  {:.<60}'''.format(self.header, self.count, 'IP', 'HOSTNAME',
+                                                          'OS', 'TEAM', 'COMMENT')
         return title
+
+    def filter_device(self):
+        pass
+
+    @staticmethod
+    def _quitter(picker):
+        sys.exit(0)
 
     def hosts_table(self):
         """Makes a table from input entries."""
-        selected = pick(self.devices, self.title, indicator='==>', options_map_func=self.get_label)
-        return selected[0]  # returns json of foreman entry
+        if self.group:
+            self.devices = [device for device in self.devices if device['hostgroup_name'] == self.group]
+        picker = Picker(self.devices, self.title, indicator='==>', options_map_func=self.get_label)
+        picker.register_custom_handler(ord('q'),  Menu._quitter)
+        selected, _ = picker.start()
+        return selected#[0]  # returns json of foreman entry
 
 
 class Actions:
@@ -204,10 +253,10 @@ def main():
         sys.exit(2)
 
     # getting data
-    login = Connection(user, passd)
+    login = Foreman(user, passd)
 
     devices = login.get_json_from_foreman()
-    table = Menu(devices)
+    table = Menu(devices, admin=login.is_admin())
     entry = table.hosts_table()
     actions = Actions(entry)
     action = actions.device_actions()
