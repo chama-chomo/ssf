@@ -138,10 +138,13 @@ class Menu:
 class Actions:
     """Provides service operations."""
 
-    varbash1 = "export hostv=$(cat /etc/konicaminolta/global/wph-version)"
-    varbash2 = "export hostm=$(cat /etc/konicaminolta/global/wph-model)"
+    varbash1 = '[ -s /etc/konicaminolta/global/wph-version ] && export hostv=$(cat /etc/konicaminolta/global/wph-version)'
+    varbash2 = '[ -s /etc/konicaminolta/global/wph-model ] && export hostm=$(cat /etc/konicaminolta/global/wph-model)'
     varbash3 = 'export hostn=$(hostname | sed "s/.*ffff-/$hostm-/g")'
     varbash4 = 'export hostr=$(cat /etc/apt/sources.list.d/konicaminolta.list | grep debian | cut -d" " -f4)'
+    varbash5 = '[ -z $hostv ] && export hostv=$(crudini --get /etc/konicaminolta/syseng.ini global version)'
+    varbash6 = '[ -z $hostm ] && export hostm=$(crudini --get /etc/konicaminolta/syseng.ini global model)'
+
     wph_intro = "export PS1='[$hostv-$hostr]\\[\\e]0;\\u@\\h: \\w\\a\\]${debian_chroot:+($debian_chroot)}\\u@$hostn:\\w\\$'"
 
     answ = ["password: ", "# ", "iLO-> ", "login: ", "Password: "]
@@ -190,6 +193,8 @@ Please choose an action: """.format(self.device.get('ip'),
         child.sendline(Actions.varbash2)
         child.sendline(Actions.varbash3)
         child.sendline(Actions.varbash4)
+        child.sendline(Actions.varbash5)
+        child.sendline(Actions.varbash6)
         child.sendline(Actions.wph_intro)
         child.sendline("clear")
         child.setwinsize(term_size.lines, term_size.columns)
