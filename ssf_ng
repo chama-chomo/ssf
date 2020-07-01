@@ -4,6 +4,7 @@ import configparser
 import os
 import sys
 import webbrowser
+import subprocess
 import time as ttime
 
 import pexpect
@@ -177,10 +178,29 @@ Please choose an action: """.format(self.device.get('ip'),
 
         options = ['SSH               (establish SSH connection to a machine)',
                    'ILO CONSOLE       (establish SSH connection to a machine via ILO console)',
-                   'ILO WEB           (open ILO web interface in the WEB browser)']
+                   'ILO WEB           (open ILO web interface in the WEB browser)',
+                   'IS_REGISTERED     (run an external command to list all environments machine got registration in)']
         _, index = pick(options, title, indicator='==>')
 
         return index
+
+    def backends_check(self):
+        """Run external command to go through all the backends and list where
+        the machine got registration.
+        """
+        device_name = self.device['name'].replace('.bic.local', '')
+
+        try:
+            cmd_result = subprocess.run(['wph-backends-check', '-i', device_name],
+                                        stderr=subprocess.PIPE)
+        except (OSError, subprocess.CalledProcessError):
+            print('Backend check command could not be executed properly. '
+                         'Make sure folder containing "wph-backends-check" command is in your $PATH'
+                         ' and configured properly.')
+            print('More info at: https://gitlab.kmiservicehub.com/scarabs/wph-backends-query-tool')
+            return False
+        else:
+            return True
 
     def connect_ssh(self):
         """connect to the host via ssh """
@@ -272,6 +292,12 @@ def main():
         actions.connect_ilo_cons()
     elif action == 2:  # ILO WEB option
         actions.connect_ilo_web()
+    elif action == 3:  # backends check
+        response = actions.backends_check()
+        if response:
+            sys.exit(0)
+        else:
+            sys.exit(1)
     else:
         print('Invalid action')
         sys.exit(1)
