@@ -78,23 +78,30 @@ class Foreman:
 class Menu:
     """Create a nice menu."""
 
-    def __init__(self, devices, admin=False):
+    def __init__(self, devices, admin=False, preferred_group=None):
         self.count, self.devices = devices
+        self.preferred_group = preferred_group
         self.header = '''---------------------------------------------------------------------------
 +++ [ SSF ] This tool lets you access a system being managed by Foreman +++
 ---------------------------------------------------------------------------
                    [Press "q" to quit, "j/k" or arrows to move in the menu]\n'''
         if admin:
             self.mod_header = self.header + "\n !!! ADMIN MODE detected, use group filter to narrow selection: "
-            self.group  = self._choose_group()
+            self.group = self._choose_group()
         else:
             self.group = None
+
+    def _sort_preferred(self, e):
+        if self.preferred_group == e:
+            e = "1. " + e
+        return e
 
     def _choose_group(self):
         """Create menu for choosing a group."""
         groups = {group['hostgroup_name'] for group in self.devices}
         groups = list(groups)
         groups.insert(0, 'SHOW ALL DEVICES')
+        groups.sort(key=self._sort_preferred)
         selected, _ = pick(groups, self.mod_header, indicator='==>')
         if selected == 'SHOW ALL DEVICES':
             return None
@@ -268,20 +275,32 @@ def main():
         [credentials]
         user = youremail@domain.com
         password = yourpasswordtoaccessforeman
+
+        [groups]
+        preferred_group = Scarabs
         ....
 
         Note, only devices that are assigned to your team will be listed for you, unless
         you're Foreman admin.
 
+        - Preferred group can be used in case your're admin and you want to prefer one of the groups
+          so it's always on the top of the list
+
         """
         )
         sys.exit(2)
+
+    try:
+        preferred_group = config["groups"]["preferred_group"]
+    except KeyError:
+        # Safely ignore ;)
+        preferred_group = None
 
     # getting data
     login = Foreman(user, passd)
 
     devices = login.get_json_from_foreman()
-    table = Menu(devices, admin=login.is_admin())
+    table = Menu(devices, admin=login.is_admin(), preferred_group=preferred_group)
     entry = table.hosts_table()
     actions = Actions(entry)
     action = actions.device_actions()
@@ -301,7 +320,6 @@ def main():
     else:
         print('Invalid action')
         sys.exit(1)
-
 
 
 if __name__ == "__main__":
