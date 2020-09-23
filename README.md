@@ -29,6 +29,20 @@ anywhere, type as 'root' :
 or call it as below:
 `python3 /path/to/ssf_ng`
 
+# Config File
+Example of `~/.foreman-api_creds` configuration file
+
+```
+[credentials]
+user = peter.kuchar
+password = 7D4MqMW0Rm
+[groups]
+preferred_group = Scarabs
+```
+
+Use `preferred group` if you are Foreman Admin and you want to have one of the
+groups always on the top of the list
+
 # Outstanding issues / bugs
 
 n/a
