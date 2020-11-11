@@ -34,10 +34,10 @@ Example of `~/.foreman-api_creds` configuration file
 
 ```
 [credentials]
-user = peter.kuchar
-password = 7D4MqMW0Rm
+user = my.login
+password = 7D4qMW0Rm
 [groups]
-preferred_group = Scarabs
+preferred_group = Rockets
 ```
 
 Use `preferred group` if you are Foreman Admin and you want to have one of the
